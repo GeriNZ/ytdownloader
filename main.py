@@ -8,11 +8,12 @@ import pyshorteners
 import io
 import logging
 import os
+import tempfile
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-def download_video(video_url, download_path, audio_only, download_transcript, start_time, end_time):
+def download_video(video_url, audio_only, download_transcript, start_time, end_time):
     try:
         def progress_hook(d):
             if d['status'] == 'downloading':
@@ -24,38 +25,50 @@ def download_video(video_url, download_path, audio_only, download_transcript, st
         # Get the ffmpeg executable path from imageio_ffmpeg
         ffmpeg_path = ffmpeg.get_ffmpeg_exe()
 
-        ydl_opts = {
-            'progress_hooks': [progress_hook],
-            'outtmpl': f'{download_path}/%(title)s.%(ext)s',
-            'logger': logger,
-            'ffmpeg_location': ffmpeg_path  # Use ffmpeg from imageio-ffmpeg
-        }
+        with tempfile.TemporaryDirectory() as download_path:
+            ydl_opts = {
+                'progress_hooks': [progress_hook],
+                'outtmpl': f'{download_path}/%(title)s.%(ext)s',
+                'logger': logger,
+                'ffmpeg_location': ffmpeg_path  # Use ffmpeg from imageio-ffmpeg
+            }
 
-        if audio_only:
-            ydl_opts['format'] = 'bestaudio'
-            ydl_opts['postprocessors'] = [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }]
+            if audio_only:
+                ydl_opts['format'] = 'bestaudio'
+                ydl_opts['postprocessors'] = [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }]
 
-        if start_time or end_time:
-            # Use FFmpeg to trim the video after downloading
-            ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [{
-                'key': 'FFmpegVideoConvertor',
-                'preferedformat': 'mp4'
-            }]
-            ydl_opts['postprocessor_args'] = []
-            if start_time:
-                ydl_opts['postprocessor_args'].extend(['-ss', start_time])
-            if end_time:
-                ydl_opts['postprocessor_args'].extend(['-to', end_time])
+            if start_time or end_time:
+                # Use FFmpeg to trim the video after downloading
+                ydl_opts['postprocessors'] = ydl_opts.get('postprocessors', []) + [{
+                    'key': 'FFmpegVideoConvertor',
+                    'preferedformat': 'mp4'
+                }]
+                ydl_opts['postprocessor_args'] = []
+                if start_time:
+                    ydl_opts['postprocessor_args'].extend(['-ss', start_time])
+                if end_time:
+                    ydl_opts['postprocessor_args'].extend(['-to', end_time])
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
 
-        if download_transcript:
-            download_transcript_func(video_url, download_path)
+            if download_transcript:
+                download_transcript_func(video_url, download_path)
+
+            # Provide a download link to the user
+            for file_name in os.listdir(download_path):
+                file_path = os.path.join(download_path, file_name)
+                with open(file_path, 'rb') as file:
+                    st.download_button(
+                        label=f"Download {file_name}",
+                        data=file,
+                        file_name=file_name,
+                        mime='application/octet-stream'
+                    )
 
         st.session_state['status'] = 'Download complete.'
 
@@ -63,7 +76,7 @@ def download_video(video_url, download_path, audio_only, download_transcript, st
         logger.error(f"An error occurred: {e}")
         st.session_state['status'] = f'Error occurred: {e}'
 
-def download_playlist(playlist_url, download_path, start_index):
+def download_playlist(playlist_url, start_index):
     try:
         def progress_hook(d):
             if d['status'] == 'downloading':
@@ -75,20 +88,33 @@ def download_playlist(playlist_url, download_path, start_index):
         # Get the ffmpeg executable path from imageio_ffmpeg
         ffmpeg_path = ffmpeg.get_ffmpeg_exe()
 
-        ydl_opts = {
-            'progress_hooks': [progress_hook],
-            'outtmpl': f'{download_path}/%(playlist)s/%(playlist_index)s - %(title)s.%(ext)s',
-            'noplaylist': False,
-            'playliststart': start_index,
-            'logger': logger,
-            'ffmpeg_location': ffmpeg_path  # Use ffmpeg from imageio-ffmpeg
-        }
+        with tempfile.TemporaryDirectory() as download_path:
+            ydl_opts = {
+                'progress_hooks': [progress_hook],
+                'outtmpl': f'{download_path}/%(playlist)s/%(playlist_index)s - %(title)s.%(ext)s',
+                'noplaylist': False,
+                'playliststart': start_index,
+                'logger': logger,
+                'ffmpeg_location': ffmpeg_path  # Use ffmpeg from imageio-ffmpeg
+            }
 
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info_dict = ydl.extract_info(playlist_url, download=False)
-            for idx, entry in enumerate(info_dict['entries'], start=start_index):
-                st.session_state['status'] = f"Downloading video {idx}: {entry['title']}"
-                ydl.download([entry['webpage_url']])
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info_dict = ydl.extract_info(playlist_url, download=False)
+                for idx, entry in enumerate(info_dict['entries'], start=start_index):
+                    st.session_state['status'] = f"Downloading video {idx}: {entry['title']}"
+                    ydl.download([entry['webpage_url']])
+
+            # Provide download links to the user
+            for root, _, files in os.walk(download_path):
+                for file_name in files:
+                    file_path = os.path.join(root, file_name)
+                    with open(file_path, 'rb') as file:
+                        st.download_button(
+                            label=f"Download {file_name}",
+                            data=file,
+                            file_name=file_name,
+                            mime='application/octet-stream'
+                        )
 
         st.session_state['status'] = 'Download complete.'
 
@@ -187,12 +213,12 @@ def generate_qr_code(data_to_encode, title):
     return byte_im
 
 def main():
-    st.title('Simple YouTube Downloader with QR Code Generator')
+    st.title('Simple YouTube Downloader')
 
     # User Guide
     st.markdown('''**User Guide:**
-    This tool is designed to make using YouTube videos in educational settings easier. You can download the video or choose just the audio. You can also select to download portions of the video with specific start and end times. Choose to download the transcript as well. The tool also includes a QR code generator that can be used to share the video with others as well as a URL shortener to make the URL more readable.
     - Select the appropriate download type (Video or Playlist).
+    - Only download transcripts if required as they incur a charge.
     - Support the development: [Support me on BuyMeACoffee](https://buymeacoffee.com/geraldinebengsch)
     ''')
 
@@ -201,9 +227,6 @@ def main():
 
     # Video/Playlist URL input
     video_url = st.text_input('YouTube URL:', key='video_url')
-
-    # Download Path input
-    download_path = st.text_input('Download Path (optional, default is current folder):', value='.', key='download_path')
 
     # Video specific options
     if download_type == 'Video':
@@ -232,7 +255,6 @@ def main():
             if download_type == 'Video':
                 download_video(
                     st.session_state['video_url'],
-                    st.session_state['download_path'],
                     st.session_state['audio_only'],
                     st.session_state['download_transcript'],
                     st.session_state['start_time'],
@@ -241,7 +263,6 @@ def main():
             elif download_type == 'Playlist':
                 download_playlist(
                     st.session_state['video_url'],
-                    st.session_state['download_path'],
                     st.session_state['start_index']
                 )
 
@@ -254,6 +275,8 @@ def main():
         st.write(st.session_state['status'])
 
     # QR Code Generator Section
+   
+
     st.header("QR Code Generator")
 
     # Option to shorten URL
